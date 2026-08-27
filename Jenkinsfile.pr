@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     tools {
-        maven 'Maven 3' // Assurez-vous que le nom correspond à votre config Jenkins (Manage Jenkins > Tools)
+        maven 'Maven-3.9' // Assurez-vous que le nom correspond à votre config Jenkins (Manage Jenkins > Tools)
     }
 
     stages {
