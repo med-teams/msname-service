@@ -2,31 +2,48 @@ pipeline {
     agent any
 
     tools {
-        maven 'Maven-3.9' // Assurez-vous que le nom correspond à votre config Jenkins (Manage Jenkins > Tools)
+        maven 'Maven-3.9'
     }
 
     stages {
-        stage('Compile & Test') {
+        stage('1. Build & Push Commons-API') {
             steps {
-                sh 'mvn clean test'
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                script {
-                    def scannerHome = tool 'SonarQubeScanner' // Si vous utilisez le scanner global ou Maven directement
-                    withSonarQubeEnv('SonarQube') { // Nom défini dans Manage Jenkins > System
-                        sh 'mvn sonar:sonar -Dsonar.projectKey=msname-service'
+                configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
+                    // 1. Jenkins clone le repo commons-api dans un dossier temporaire
+                    dir('commons-api-temp') {
+                        git branch: 'main', url: 'https://github.com/med-teams/commons-api.git'
+                        
+                        // 2. Jenkins compile et déploie commons-api sur Nexus
+                        sh 'mvn clean deploy -s $MAVEN_SETTINGS'
                     }
                 }
             }
         }
 
-        stage('Quality Gate') {
+        stage('2. Compile & Test MS Name Service') {
+            steps {
+                configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
+                    // 3. Jenkins compile msname-service en téléchargeant le nouveau JAR sur Nexus
+                    sh 'mvn clean test -s $MAVEN_SETTINGS'
+                }
+            }
+        }
+
+        stage('3. SonarQube Analysis') {
+            steps {
+                script {
+                    configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
+                        withSonarQubeEnv('SonarQube') {
+                            sh 'mvn sonar:sonar -Dsonar.projectKey=msname-service -s $MAVEN_SETTINGS'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('4. Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
-                    // Bloque la PR si SonarQube renvoie FAIL
                     waitForQualityGate abortPipeline: true
                 }
             }
