@@ -5,6 +5,11 @@ pipeline {
         maven 'Maven-3.9'
     }
 
+    triggers {
+        // Déclenche le build lors d'un événement GitHub (ex: Ouverture/Update de PR)
+        githubPush()
+    }
+
     stages {
         stage('1. Build & Push Commons-API') {
             steps {
