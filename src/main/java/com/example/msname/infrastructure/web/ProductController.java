@@ -30,6 +30,7 @@ public class ProductController {
     @GetMapping("/{id}")
     public ApiResponse<ProductResponse> getById(@PathVariable Long id) {
         log.info("Received request to get product with ID: {}", id);
+        log.debug("Fetching product details for ID: {}", id);
         return ApiResponse.ok(productService.getById(id));
     }
 
