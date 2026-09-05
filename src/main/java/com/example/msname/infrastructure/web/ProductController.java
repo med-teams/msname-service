@@ -25,6 +25,7 @@ public class ProductController {
 
     @GetMapping("/{id}")
     public ApiResponse<ProductResponse> getById(@PathVariable Long id) {
+        System.out.println("Received request to get product with ID: " + id);
         return ApiResponse.ok(productService.getById(id));
     }
 
