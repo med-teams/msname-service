@@ -5,19 +5,17 @@ pipeline {
         maven 'Maven-3.9'
     }
 
-    triggers {
-        // Déclenche le build lors d'un événement GitHub (ex: Ouverture/Update de PR)
-        githubPush()
-    }
+
 
     stages {
+
         stage('1. Build & Push Commons-API') {
             steps {
                 configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
                     // 1. Jenkins clone le repo commons-api dans un dossier temporaire
                     dir('commons-api-temp') {
                         git branch: 'main', url: 'https://github.com/med-teams/commons-api.git'
-                        
+
                         // 2. Jenkins compile et déploie commons-api sur Nexus
                         sh 'mvn clean deploy -s $MAVEN_SETTINGS'
                     }
@@ -29,7 +27,7 @@ pipeline {
             steps {
                 configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
                     // 3. Jenkins compile msname-service en téléchargeant le nouveau JAR sur Nexus
-                    sh 'mvn clean test -s $MAVEN_SETTINGS'
+                    sh 'mvn clean verify  -s $MAVEN_SETTINGS'
                 }
             }
         }
