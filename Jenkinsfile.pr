@@ -5,30 +5,18 @@ pipeline {
         maven 'Maven-3.9'
     }
 
-    stages {
 
-        stage('Debug PR') {
-            steps {
-                sh '''
-                    echo "CHANGE_ID=$CHANGE_ID"
-                    echo "CHANGE_BRANCH=$CHANGE_BRANCH"
-                    echo "CHANGE_TARGET=$CHANGE_TARGET"
-                '''
-            }
-        }
+
+    stages {
 
         stage('1. Build & Push Commons-API') {
             steps {
-                configFileProvider([
-                        configFile(
-                                fileId: 'maven-nexus-settings',
-                                variable: 'MAVEN_SETTINGS'
-                        )
-                ]) {
+                configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
+                    // 1. Jenkins clone le repo commons-api dans un dossier temporaire
                     dir('commons-api-temp') {
-                        git branch: 'main',
-                                url: 'https://github.com/med-teams/commons-api.git'
+                        git branch: 'main', url: 'https://github.com/med-teams/commons-api.git'
 
+                        // 2. Jenkins compile et déploie commons-api sur Nexus
                         sh 'mvn clean deploy -s $MAVEN_SETTINGS'
                     }
                 }
@@ -37,42 +25,20 @@ pipeline {
 
         stage('2. Compile & Test MS Name Service') {
             steps {
-                configFileProvider([
-                        configFile(
-                                fileId: 'maven-nexus-settings',
-                                variable: 'MAVEN_SETTINGS'
-                        )
-                ]) {
-                    sh 'mvn clean verify -s $MAVEN_SETTINGS'
+                configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
+                    // 3. Jenkins compile msname-service en téléchargeant le nouveau JAR sur Nexus
+                    sh 'mvn clean verify  -s $MAVEN_SETTINGS'
                 }
             }
         }
 
         stage('3. SonarQube Analysis') {
             steps {
-                configFileProvider([
-                        configFile(
-                                fileId: 'maven-nexus-settings',
-                                variable: 'MAVEN_SETTINGS'
-                        )
-                ]) {
-                    withSonarQubeEnv('SonarQube') {
-                        sh '''
-                            echo "=============================="
-                            echo "Analyse SonarQube du PR"
-                            echo "PR       : $CHANGE_ID"
-                            echo "Source   : $CHANGE_BRANCH"
-                            echo "Target   : $CHANGE_TARGET"
-                            echo "=============================="
-
-                            mvn sonar:sonar \
-                              -Dsonar.projectKey=msname-service \
-                              -Dsonar.projectName=msname-service \
-                              -Dsonar.pullrequest.key="$CHANGE_ID" \
-                              -Dsonar.pullrequest.branch="$CHANGE_BRANCH" \
-                              -Dsonar.pullrequest.base="$CHANGE_TARGET" \
-                              -s "$MAVEN_SETTINGS"
-                        '''
+                script {
+                    configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
+                        withSonarQubeEnv('SonarQube') {
+                            sh 'mvn sonar:sonar -Dsonar.projectKey=msname-service -s $MAVEN_SETTINGS'
+                        }
                     }
                 }
             }
