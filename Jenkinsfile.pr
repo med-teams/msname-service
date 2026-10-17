@@ -1,50 +1,107 @@
+// Jenkinsfile.pr - msname-service : analyse des pull requests (job multibranch dedie aux PR).
+// Le Jenkinsfile de la racine reste reserve aux builds de branches.
+//
+// Regle unique, identique pour toutes les PR : chaque bibliotheque interne de INTERNAL_LIBS est
+// construite depuis ses sources dans ce build, a partir de la premiere branche qui existe dans
+// son depot parmi :
+//   1. la branche source de la PR (meme nom que dans le microservice, ex. bugfix/EB-200)
+//   2. la branche cible de la PR (ex. release/ABC)
+//   3. la branche par defaut du depot
+// Elle est installee dans le depot Maven local du job sous la version <base>-ci, puis la propriete
+// correspondante du pom du microservice est forcee sur cette version (workspace uniquement,
+// jamais commitee). Rien n'est publie sur Nexus et aucun autre job n'est sollicite : le jar
+// utilise est celui du commit affiche dans la description du build.
+//
+// Etapes : bibliotheques internes, build + tests, analyse SonarQube (cle <service>-<cible>), Quality Gate.
+
+import groovy.transform.Field
+
+// ---- Configuration propre au microservice ------------------------------------------------
+@Field final String SERVICE_NAME = 'msname-service'
+
+// Bibliotheques internes, dans l'ordre de construction : une bibliotheque qui en utilise une
+// autre est declaree apres elle. versionProperty = propriete <properties> du pom du microservice.
+@Field final List INTERNAL_LIBS = [
+    [repo: 'commons-api', versionProperty: 'commons-api.version']
+]
+// -------------------------------------------------------------------------------------------
+
 pipeline {
-    agent any
+    agent { label 'build-agent' }
 
     tools {
         maven 'Maven-3.9'
+        jdk 'JDK-17'
     }
 
+    options {
+        timestamps()
+        // Un nouveau push sur la PR rend l'analyse en cours obsolete.
+        disableConcurrentBuilds(abortPrevious: true)
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+        timeout(time: 45, unit: 'MINUTES')
+    }
 
+    environment {
+        GITHUB_ORG          = 'med-teams'
+        SONARQUBE_SERVER    = 'SonarQube'
+        GIT_TERMINAL_PROMPT = '0'
+    }
 
     stages {
-
-        stage('1. Build & Push Commons-API') {
-            steps {
-                configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
-                    // 1. Jenkins clone le repo commons-api dans un dossier temporaire
-                    dir('commons-api-temp') {
-                        git branch: 'main', url: 'https://github.com/med-teams/commons-api.git'
-
-                        // 2. Jenkins compile et déploie commons-api sur Nexus
-                        sh 'mvn clean deploy -s $MAVEN_SETTINGS'
-                    }
-                }
-            }
-        }
-
-        stage('2. Compile & Test MS Name Service') {
-            steps {
-                configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
-                    // 3. Jenkins compile msname-service en téléchargeant le nouveau JAR sur Nexus
-                    sh 'mvn clean verify  -s $MAVEN_SETTINGS'
-                }
-            }
-        }
-
-        stage('3. SonarQube Analysis') {
+        stage('Bibliotheques internes') {
             steps {
                 script {
-                    configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
-                        withSonarQubeEnv('SonarQube') {
-                            sh 'mvn sonar:sonar -Dsonar.projectKey=msname-service -s $MAVEN_SETTINGS'
+                    if (!env.CHANGE_ID) {
+                        error 'Jenkinsfile.pr est reserve aux pull requests : le job doit utiliser "Discover pull requests" uniquement'
+                    }
+
+                    List built = []
+                    for (Map lib : INTERNAL_LIBS) {
+                        built.add(buildInternalLib(lib, built))
+                    }
+
+                    List summary = []
+                    for (Map lib : built) {
+                        setPomProperty('pom.xml', lib.versionProperty, lib.version)
+                        String applied = mvnEvaluate('pom.xml', lib.versionProperty)
+                        if (applied != lib.version) {
+                            error "pom.xml : ${lib.versionProperty} = '${applied}' au lieu de '${lib.version}'. " +
+                                  "Declarez <${lib.versionProperty}> dans <properties> et utilisez-la pour la dependance ${lib.repo}."
                         }
+                        summary.add("${lib.repo} ${lib.branch}@${lib.commit}".toString())
+                    }
+                    currentBuild.description = summary.join(' | ')
+                }
+            }
+        }
+
+        stage('Build & Tests') {
+            steps {
+                script {
+                    mvn('clean verify -U')
+                }
+            }
+            post {
+                always {
+                    junit testResults: 'target/surefire-reports/*.xml', allowEmptyResults: true
+                }
+            }
+        }
+
+        stage('Analyse SonarQube') {
+            steps {
+                script {
+                    // Community Edition = un seul etat par projet : une cle par branche cible.
+                    env.SONAR_PROJECT_KEY = "${SERVICE_NAME}-${sonarSuffix(env.CHANGE_TARGET)}"
+                    withSonarQubeEnv(env.SONARQUBE_SERVER) {
+                        mvn('sonar:sonar -Dsonar.projectKey="$SONAR_PROJECT_KEY" -Dsonar.projectName="$SONAR_PROJECT_KEY"')
                     }
                 }
             }
         }
 
-        stage('4. Quality Gate') {
+        stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
@@ -52,4 +109,106 @@ pipeline {
             }
         }
     }
+}
+
+// ---- Bibliotheques internes ---------------------------------------------------------------
+
+// Construit une bibliotheque depuis ses sources et l'installe dans le depot Maven local du job.
+// Retourne [repo, versionProperty, branch, commit, version].
+Map buildInternalLib(Map lib, List alreadyBuilt) {
+    String url = "https://github.com/${env.GITHUB_ORG}/${lib.repo}.git"
+    String pom = ".deps/${lib.repo}/pom.xml"
+    String branch = findLibBranch(url)
+    Map result = [repo: lib.repo, versionProperty: lib.versionProperty]
+
+    withEnv(["LIB_URL=${url}", "LIB_DIR=.deps/${lib.repo}", "LIB_BRANCH=${branch ?: ''}"]) {
+        withCredentials([gitUsernamePassword(credentialsId: 'github-api-token', gitToolName: 'Default')]) {
+            sh '''
+                rm -rf "$LIB_DIR"
+                if [ -n "$LIB_BRANCH" ]; then
+                    git clone --quiet --depth 1 --branch "$LIB_BRANCH" "$LIB_URL" "$LIB_DIR"
+                else
+                    git clone --quiet --depth 1 "$LIB_URL" "$LIB_DIR"
+                fi
+            '''
+        }
+        result.branch = sh(returnStdout: true, script: 'git -C "$LIB_DIR" rev-parse --abbrev-ref HEAD').trim()
+        result.commit = sh(returnStdout: true, script: 'git -C "$LIB_DIR" rev-parse --short=10 HEAD').trim()
+    }
+
+    // Version technique non-SNAPSHOT, jamais publiee : Maven la prend toujours dans le depot local
+    // du job, ni -U ni Nexus ne peuvent la remplacer.
+    result.version = baseVersion(mvnEvaluate(pom, 'project.version')) + '-ci'
+    mvn("-f ${pom} org.codehaus.mojo:versions-maven-plugin:2.18.0:set -DnewVersion=${result.version} -DgenerateBackupPoms=false -DprocessAllModules=true")
+    for (Map dep : alreadyBuilt) {
+        setPomProperty(pom, dep.versionProperty, dep.version)   // sans effet si la propriete est absente
+    }
+    mvn("-f ${pom} install -DskipTests")
+
+    echo "${lib.repo} : branche ${result.branch} @ ${result.commit}, installee en ${result.version}"
+    return result
+}
+
+// Premiere branche existante dans le depot de la bibliotheque : source de la PR, puis cible de
+// la PR. null = branche par defaut. Toute erreur Git (reseau, droits) fait echouer le build :
+// jamais de repli silencieux sur une autre branche.
+String findLibBranch(String url) {
+    for (String candidate : [env.CHANGE_BRANCH, env.CHANGE_TARGET]) {
+        int rc = 0
+        withEnv(["LIB_URL=${url}", "CANDIDATE=${candidate}"]) {
+            withCredentials([gitUsernamePassword(credentialsId: 'github-api-token', gitToolName: 'Default')]) {
+                rc = sh(returnStatus: true, script: 'git ls-remote --exit-code --heads "$LIB_URL" "refs/heads/$CANDIDATE" > /dev/null')
+            }
+        }
+        if (rc == 0) {
+            return candidate
+        }
+        if (rc != 2) {   // 2 = branche absente
+            error "git ls-remote ${url} a echoue (code ${rc}) : verifiez le reseau et le credential github-api-token"
+        }
+    }
+    return null
+}
+
+// Force une propriete de version dans un pom (workspace uniquement, jamais commite).
+void setPomProperty(String pom, String property, String version) {
+    mvn("-f ${pom} org.codehaus.mojo:versions-maven-plugin:2.18.0:set-property -Dproperty=${property} -DnewVersion=${version} -DgenerateBackupPoms=false")
+}
+
+// ---- Maven --------------------------------------------------------------------------------
+
+// Settings Nexus (miroir) injecte par Config File Provider et depot local propre au job : deux
+// builds de PR concurrents ne partagent jamais les jars de leurs bibliotheques internes.
+// Les arguments viennent de la configuration ou de valeurs validees, jamais d'un nom de branche.
+String mavenCommand(String args) {
+    return "mvn -B -ntp -s \"\$MAVEN_SETTINGS\" -Dmaven.repo.local=\"\$WORKSPACE/.m2/repository\" ${args}"
+}
+
+void mvn(String args) {
+    configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
+        sh mavenCommand(args)
+    }
+}
+
+String mvnEvaluate(String pom, String expression) {
+    String value = null
+    configFileProvider([configFile(fileId: 'maven-nexus-settings', variable: 'MAVEN_SETTINGS')]) {
+        value = sh(returnStdout: true, script: mavenCommand(
+                "-f ${pom} -q org.apache.maven.plugins:maven-help-plugin:3.5.1:evaluate -Dexpression=${expression} -DforceStdout")).trim()
+    }
+    return value
+}
+
+// 1.0.0 / 1.0.0-SNAPSHOT / 1.1.0-RC1 -> 1.0.0 / 1.0.0 / 1.1.0
+String baseVersion(String version) {
+    String base = version.replaceFirst(/-.*$/, '')
+    if (!(base ==~ /\d+\.\d+\.\d+/)) {
+        error "Version Maven '${version}' inattendue : attendu X.Y.Z[-qualifier]"
+    }
+    return base
+}
+
+// release/ABC -> abc, main -> main
+String sonarSuffix(String branch) {
+    return branch.substring(branch.lastIndexOf('/') + 1).toLowerCase().replaceAll(/[^a-z0-9._-]/, '-')
 }
