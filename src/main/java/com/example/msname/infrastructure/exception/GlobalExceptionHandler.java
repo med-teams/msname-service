@@ -3,6 +3,7 @@ package com.example.msname.infrastructure.exception;
 import com.example.commons.api.dto.ErrorResponse;
 import com.example.commons.api.exception.BusinessException;
 import com.example.commons.api.exception.ConflictException;
+import com.example.commons.api.exception.ErrorCodes;
 import com.example.commons.api.exception.ResourceNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -15,7 +16,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleNotFound(ResourceNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(new ErrorResponse("NOT_FOUND", ex.getMessage()));
+                .body(new ErrorResponse(ErrorCodes.NOT_FOUND, ex.getMessage()));
     }
 
     @ExceptionHandler(BusinessException.class)
@@ -27,6 +28,6 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ConflictException.class)
     public ResponseEntity<ErrorResponse> handleConflict(ConflictException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(new ErrorResponse("CONFLICT", ex.getMessage()));
+                .body(new ErrorResponse(ErrorCodes.CONFLICT, ex.getMessage()));
     }
 }
