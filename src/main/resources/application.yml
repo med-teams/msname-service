@@ -3,11 +3,25 @@ server:
 
 spring:
   application:
-    name: msname-service
+    name: catalog-service
   datasource:
-    url: jdbc:h2:mem:msname
-    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:catalog;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
   jpa:
+    open-in-view: false
     hibernate:
-      ddl-auto: update
-    show-sql: true
+      # Le schema est gere par Flyway (src/main/resources/db/migration) : Hibernate ne fait que le verifier.
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html

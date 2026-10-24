@@ -1,4 +1,4 @@
-// Jenkinsfile.pr - msname-service : analyse des pull requests (job multibranch dedie aux PR).
+// Jenkinsfile.pr - catalog-service : analyse des pull requests (job multibranch dedie aux PR).
 // Le Jenkinsfile de la racine reste reserve aux builds de branches.
 //
 // Regle unique, identique pour toutes les PR : chaque bibliotheque interne de INTERNAL_LIBS est
@@ -17,7 +17,7 @@
 import groovy.transform.Field
 
 // ---- Configuration propre au microservice ------------------------------------------------
-@Field final String SERVICE_NAME = 'msname-service'
+@Field final String SERVICE_NAME = 'catalog-service'
 
 // Bibliotheques internes, dans l'ordre de construction : une bibliotheque qui en utilise une
 // autre est declaree apres elle. versionProperty = propriete <properties> du pom du microservice.

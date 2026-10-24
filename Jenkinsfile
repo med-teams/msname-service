@@ -1,4 +1,4 @@
-// Jenkinsfile - msname-service
+// Jenkinsfile - catalog-service
 // Un seul Jenkinsfile, comportement different selon le contexte :
 //  - PR vers release/*      -> build + sonar + quality gate, AUCUN jar publie
 //  - branche release/* elle-meme (apres merge) -> build jar + deploiement portal
@@ -8,7 +8,7 @@ pipeline {
 
     parameters {
         string(name: 'MODULE_PATH', defaultValue: '.', description: 'Chemin du module a builder')
-        string(name: 'SERVICE_NAME', defaultValue: 'msname-service', description: 'Nom du microservice')
+        string(name: 'SERVICE_NAME', defaultValue: 'catalog-service', description: 'Nom du microservice')
         string(name: 'DEPLOY_ROOT', defaultValue: '/opt/portal/apps', description: 'Racine de deploiement sur le portal')
         booleanParam(name: 'REQUIRE_APPROVAL', defaultValue: true, description: 'Validation manuelle avant deploiement')
     }
