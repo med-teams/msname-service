@@ -3,6 +3,7 @@ package com.example.msname.infrastructure.exception;
 import com.example.commons.api.dto.ErrorResponse;
 import com.example.commons.api.exception.ConflictException;
 import com.example.commons.api.exception.ErrorCodes;
+import com.example.commons.api.exception.ForbiddenException;
 import com.example.commons.api.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -42,5 +43,20 @@ class GlobalExceptionHandlerTest {
         assertNotNull(response.getBody());
         assertEquals(ErrorCodes.NOT_FOUND, response.getBody().getCode());
         assertEquals("Produit introuvable", response.getBody().getMessage());
+    }
+
+    @Test
+    void shouldMapForbiddenTo403() {
+        // Given
+        ForbiddenException exception = new ForbiddenException("Acces refuse");
+
+        // When
+        ResponseEntity<ErrorResponse> response = handler.handleForbidden(exception);
+
+        // Then
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals(ErrorCodes.FORBIDDEN, response.getBody().getCode());
+        assertEquals("Acces refuse", response.getBody().getMessage());
     }
 }
